@@ -1,0 +1,136 @@
+Grupo Fat-Tree - Trabalho Final de Sistemas Operacionais 1/2017
+
+Alunos: Edgar Fabiano Souza Filho - 14/0019201
+	Ingrid Santana Lopes - 14/0083065
+	Marcos Paulo Cayres Rosa - 14/0027131
+	Rennê Ruan Alves Oliveira - 14/0030930
+
+
+O Trabalho foi realizado utilizando a linguagem C++ necessitando possuir os seguintes arquivos:
+	escalonador.cpp, executa_postergado.cpp, gerente.cpp, shutdown.cpp, escalonador.h, executa_postergado.h, gerente.h, estrutura.h, makefile
+
+	Os arquivos podem ser compilados utilizando Makefile
+
+
+1 - Estruturas de comunicação Utilizadas:
+	1.1 - Filas de mensagem:
+		*Fila de convergência para o Escalonador (UP): Essa fila irá ser utilizada para todas as mensagens que se direcionem para o escalonador, tais como mensagem de execução postergada, finalização (shutdown) e confirmação de execução dos gerentes.
+		*Fila de divergência do escalonador (DOWN): Essa fila caracteriza principalmente as mensagens que devem ser enviadas para a árvore de gerentes, ou seja, relativas à solicitação de execução dos processos, assim como mensagens de propagação dessa solicitação de execução entre as árvore.
+		*Fila de número de job: Serve apenas para garantir a singularidade dos números de job, ela deverá sempre possuir uma mensagem para que a criação de novos jobs seja única.
+	1.2 - Sinais:
+		Foram utilizados sinais para realizar operações referentes ao shutdown, os sinais são propagados do escalonador para o seu gerente direto, este gerente direto propaga para seus filhos e assim por diante.
+
+
+2 - Estruturas de mensagens para a fila de mensagens:
+	Essas estruturas estão presentes no arquivo estrutura.h
+	2.1 - msg:
+		*Essa estrutura serve para armazenas solicitações simples, tal como adição de novos jobs ao escalonador e shutdown, ela terá além do seu tipo, o número do job correspondente (quando válido) e o nome do arquivo.
+	2.2 - exec
+		*Essa estrutura além das informações possuídas por msg terá informações acerca de execução dos jobs, tais como delay, tempo de solicitação, tempo de início da execução e tempo da finalização da execução.
+
+	As mensagens comunicadas entre a árvore terão sua estrutura predominantemente no modelo exec.
+
+
+3 - Funcionamento Geral:
+	O funcionamento de comunicação a partir das arestas é realizado a partir dos tipos das mensagens, ou seja, cada mensagem de acordo com a nó, terá um identificador para alcançar o filho, ou o pai, a definição destes tipos em sua maioria se encontra no arquivo estrutura.h, para a lógica de Fat-Tree serão 	utilizados esses identificadores com alterações, os quais também irão depender se as mensagens são enviadas para a fila UP ou DOWN.
+
+	3.1 - Escalonador:
+		*O Escalonador irá criar a árvore de gerentes, a criação da árvore foi feita de forma manual (sem laços) para garantir que cada nó na árvore lógica seja também filho do processo que a gerou, por exemplo, os processos dos nós 2 e 3 devem ser filhos do processos do nó 1 e assim por diante, cada nó também irá receber o pid dos seus filhos (caso possuam) como parâmetro de execução ao se tornarem gerentes, além do seu valor de identificador.
+
+		*O Escalonador possuirá dois vetores que são de execuções pendentes e execuções finalizadas. Em suma sua função se trata de estar em um loop infinito esperando mensagens de solicitação de adição de jobs para serem executados (estes seram adicionados ao vetor de execuções pendentes), solicitação de shutdown, a verificação dos tempos de delay dos jobs já registrados como pendentes, caso algum job esteja em seu tempo de execução, o mesmo será retirado do vetor de execução pendentes e o escalonador irá enviar uma mensagem em direção ao seu filho direto (1).
+
+		*Por último, ele estará no aguardo de confirmação de términos de execução vindos dos gerentes (para transitar entre os estados de ocupação dos gerentes, além de confirmar a execução de um job), essa confirmação de execução pode vim a partir de quatro arestas com identificadores diferentes (Fat-Tree), e precisa ao final ter 15 confirmações.
+		
+		Sumário de possíveis mensagens:
+			1 - Shutdown (Recieve, Estrutura de mensagem: msg, ID:SHUTDOWN, fila: UP)
+			2 - Adiciona Job ao Escalonador (Recieve, Estrutura de mensagem: msg, ID:ADICIONA_JOB, fila: UP)
+			3 - Recebe confirmação de execução de um gerente (Recieve, Estrutura de mensagem: exec, ID: CONFIRMACAO_EXECUCAO**, fila: UP)
+			OBS: A confirmacao de execução ocorrerá nas 4 arestas da fat tree, para isso o ID apresentado irá ter alterações (Explicação na seção Gerente/FatTree)
+			4 - Envio de execução (Send, Estrutura de mensagem: exec, ID: ID_1 (Filho imediato), fila: DOWN)
+
+		*O Shutdown do escalonador após enviar os sinais para a árvore filha irá apagar as filas de mensagens utilizadas.
+
+	
+	3.2 - Gerente:
+		*O funcionamento genérico do gerente é esperar uma requisição e comunicar mensagens entre os nós. O gerente irá ter dois funcionamentos distintos para os nós das árvores, que possuem ou que não possuem filhos.
+		
+		*Para os gerentes sem filhos temos o seguinte comportamento: 
+		O gerente irá esperar com um recieve blocante uma mensagem com seu Identificador correspondente (Nós de 8-15) e, caso ele receba, irá criar um processo para executar o arquivo solicitado. Ao final da execução identificada por um wait também blocante, o gerente irá enviar uma confirmação para o seu nó pai.
+
+			1 - Solicita execução (Recieve, Estrutura de mensagem: exec, ID: Identificador do nó, fila: DOWN)
+			2 - Confirma término da execução (Send, Estrutura de mensagem: exec, ID: Identificador do Pai, fila: UP)
+
+		*Para os gerentes com filhos também teremos subdivisões de comportamentos, porém os nós irão apresentar comportamentos semelhantes entre si:
+		O gerente com filhos irá trabalhar com o recebimento de mensagens assíncronas, tanto em wait, quanto no msgrcv, ele também irá aguardar mensagens de requisição de execução sob a fila Down dado o seu identificador (1-7), caso haja o mesmo irá executar o arquivo solicitado, porém com um wait não blocante, dado pela função waitpid(-1,...) para receber o wait de qualquer filho, que no caso ao final da execução, será do processo que teve seu término, e em seguida estes irão enviar confirmações de execução para o nó acima, porém de acordo com o nó acima é possível que essa confirmação seja enviada por várias arestas (tipos de mensagem na fila), caracterizando a Fat Tree.
+
+		Além disso, enquanto espera pelo término do filho criado para a execução, os gerentes com filhos precisam esperar uma possível confirmação de execução dos seus filhos e, dependendo dos nós, ele irá esperar uma confirmação também em várias arestas (tipos de mensagem na fila). Todas as confirmações são realizadas na fila UP, com isso em mente para realizar a lógica de diversas arestras inerente aos identificadores, foi utilizado um vetor de "multiplicadores" para fazer uma espécie de round robin de arestras. Por exemplo:
+
+		O vetor dado se trata de [1,10,100,150] Presente no arquivo estrutura.h (Os valores foram escolhidos de forma para evitar conflitos de mensagens)
+
+		Supondo que o nó 4 seja filho do nó 2, e eles podem se comunicar por duas arestas, as confirmações enviadas pelo nó 4 ao nó dois poderá ter 2 tipos de mensagem (tal que o nó 2 irá verificar esses dois tipos de mensagem), o nó 4 irá utilizar os dois primeiros elementos do vetor (condizente com a quantidade de arestas) e irá alternar entre eles de forma a multiplicar o identificador do pai, assim sendo:
+
+		O nó 4 irá enviar a primeira confirmação de execução pela aresta com identificador 2 (Do pai) vezes o primeiro índice do vetor que no caso é 1, o que resulta em uma mensagem de confirmação do tipo 2.
+		O nó 4 na próxima confirmação irá enviar uma mensagem com identificador 2 vezes o segundo índice do vetor que agora é 10, resultando em um tipo de 20, caracterizando assim a segunda aresta de comunicação. Na próxima interação o índice irá retornar a 0 e assim sucessivamente.
+		Com isso é preciso que o nó 2 verifique mensagens na fila UP nesses dois tipos (2 e 20).
+
+		Assim sendo o índice 3 do vetor será usado apenas pelos nós 2 e 3 ao se comunicar com 1, e o índice 4 será usado apenas por 1 para se comunicar com o escalonador. Os nós 2 e 3 irão verificar as 2 arestas de possibilidade, enquanto o nó 1 irá verificar 3 arestas de possibilidade.
+
+		OBS: Para não trabalharmos com números muito grandes de tipo, o nó 1 ao se comunicar com o escalonador não irá múltiplicar pelos valores dos índices, uma vez que a identificação do escalonador possui um valor de 51 (CONFIRMACAO_EXECUCAO), basta apenas somar os índices do vetor, para representar as arestas verificadas no escalonador.
+		Temos também que numa situação em que o nó 2 queira se comunicar com 1 e multiplique o valor de 1 pelo segundo índice do vetor, o valor resultante seria 10 que se trata de um nó existente, porém os nós acima de 7 não utilizam a fila UP para receber mensagens de confirmação (já que eles não possuem filhos) com isso não irá gerar conflitos de recebimentos de mensagens. 
+
+		As possibilidades de mensagem que se encontram nos gerentes com filhos são:
+
+			1 - Solicita execução (Recieve, Estrutura de mensagem: exec, ID: Identificador do nó, fila: DOWN)
+			2 - Confirma término da execução (Send, Estrutura de mensagem: exec, ID: Identificador da aresta, fila: UP)
+			3 - Recebe confirmação de término da execução (Recieve, Estrutura de mensagem: exec, ID: Identificador da aresta, fila: UP)
+
+		*Caso um gerente recebe um sinal de Shutdown, ele irá verificar se o estado em que se encontrava era ocupado ou não, informando o job que estava sendo executado no momento, após isso ele irá espalhar os sinais para os filhos (caso seja possível) enquanto entrará em um estado de wait blocante esperando o exit correspondente de seus filhos.
+
+
+	3.3 - Executa Postergado:
+		*O executa postergado é um módulo de funcionamento apenas para solicitar novos jobs que devem ser executados e enviá-los para o escalonador, porém este módulo também irá realizar a verificação da quantidade correta de parâmetros assim como seus tipos. Este módulo é o único que fará uso da Fila de mensagens de Job, que irá retirar o valor do último Job como informação da mesma e irá inserir o novo valor do Job que foi utilizado, isso é feito para garantir o valor de job único enquanto o escalonador estiver ativo.
+
+		1 - Solicita execução (Recieve, Estrutura de mensagem: exec, ID: Identificador do nó, fila: DOWN)
+
+
+	3.4 - Shutdown:
+		*O módulo de Shutdown irá excluir a fila de mensagens do identificador de jobs (as demais serão excluidas pelo escalonador) e irá enviar uma mensagem de solicitação de shutdown para o escalonador com o ID SHUTDOWN (50)
+			
+
+4 - Observações Gerais:
+	*Recomenda-se para garantir o correto funcionamento do programa como um todo que os arquivos que desejam ser executados pelos gerentes sejam executados na pasta que se encontra os executáveis do escalonador, os executáveis dos módulos não podem ser separados.
+	*A ordem de execução de um exemplo genérico deve ser:
+	./escalonador&
+	./executa_postergado (delay) (nome do arquivo)
+	./shutdown
+
+	Entre esses passos fica a critério utilizar os comandos para visualizar os processos/filas de mensagens ou não.
+	Recomenda-se não executar dois escalonadores, tendo em vista que eles irão gerar conflito nas filas de mensagens, acarretando em um mal funcionamento.
+
+
+
+Apêndice de IDs:
+
+#define RANGE_REQUISICOES -50
+#define ADICIONA_JOB 49
+#define SHUTDOWN 50
+#define CONFIRMACAO_EXECUCAO 51
+
+#define N_NOS 15
+#define ID_1 1
+#define ID_2 2
+#define ID_3 3
+#define ID_4 4
+#define ID_5 5
+#define ID_6 6
+#define ID_7 7
+#define ID_8 8
+#define ID_9 9
+#define ID_10 10
+#define ID_11 11
+#define ID_12 12
+#define ID_13 13
+#define ID_14 14
+#define ID_15 15
+
+
